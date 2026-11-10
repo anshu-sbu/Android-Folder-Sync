@@ -6,3 +6,6 @@
 *.idsig
 FolderSyncApp/build/
 PlayStore Publish.docx
+dist/
+*.p12
+*.jks

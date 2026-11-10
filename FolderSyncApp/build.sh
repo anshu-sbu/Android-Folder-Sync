@@ -11,7 +11,13 @@ JAR="$SDK/platforms/android-35/android.jar"
 export JAVA_HOME="C:\\Program Files\\Android\\Android Studio\\jbr"
 export PATH="/c/Program Files/Android/Android Studio/jbr/bin:$PATH"
 export MSYS_NO_PATHCONV=1
-KS="$(cygpath -w "$HOME/.android/debug.keystore")"   # standard Android debug key
+# Signing: set FOLDERSYNC_KS (keystore path) and FOLDERSYNC_KS_PASS_FILE (file holding its password; alias "foldersync")
+# for a release build. Without them the standard Android debug key is used.
+if [ -n "${FOLDERSYNC_KS:-}" ]; then
+  KS="$(cygpath -w "$FOLDERSYNC_KS")"; KS_ALIAS="foldersync"; KS_PASS="$(tr -d '\r\n' < "$FOLDERSYNC_KS_PASS_FILE")"
+else
+  KS="$(cygpath -w "$HOME/.android/debug.keystore")"; KS_ALIAS="androiddebugkey"; KS_PASS="android"
+fi
 
 rm -rf build && mkdir -p build/gen build/classes build/dex
 
@@ -39,8 +45,8 @@ cp build/base.apk build/unsigned.apk
 echo "[5/6] align + sign"
 "$BT/zipalign.exe" -f -p 4 build/unsigned.apk build/aligned.apk
 APKSIGNER="$(cygpath -w "$BT/lib/apksigner.jar")"
-java -jar "$APKSIGNER" sign --ks "$KS" --ks-pass pass:android \
-  --key-pass pass:android --out FolderSync.apk build/aligned.apk
+java -jar "$APKSIGNER" sign --ks "$KS" --ks-key-alias "$KS_ALIAS" --ks-pass "pass:$KS_PASS" \
+  --key-pass "pass:$KS_PASS" --out FolderSync.apk build/aligned.apk
 java -jar "$APKSIGNER" verify --print-certs FolderSync.apk | head -1
 
 echo "[6/6] built $(pwd)/FolderSync.apk ($(stat -c %s FolderSync.apk) bytes)"
