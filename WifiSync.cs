@@ -234,7 +234,7 @@ namespace PhoneSync
             get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FolderSyncPC", "server.pfx"); }
         }
 
-        /// <summary>Self-signed certificate, created once with Windows PowerShell and kept in %APPDATA%\FolderSyncPC.</summary>
+        /// <summary>Self-signed certificate, created once and kept in %APPDATA%\FolderSyncPC (needs .NET Framework 4.7.2+).</summary>
         X509Certificate2 LoadOrCreateCert()
         {
             string path = CertPath;
@@ -245,23 +245,14 @@ namespace PhoneSync
             }
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             Say("Creating the secure certificate (first start only)…");
-            string script =
-                "$ErrorActionPreference='Stop';" +
-                "$pw = ConvertTo-SecureString '" + CertPass + "' -AsPlainText -Force;" +
-                "$c = New-SelfSignedCertificate -Subject 'CN=Folder Sync PC' -CertStoreLocation Cert:\\CurrentUser\\My -KeyExportPolicy Exportable " +
-                "-KeySpec KeyExchange -KeyLength 2048 -HashAlgorithm SHA256 -Provider 'Microsoft Enhanced RSA and AES Cryptographic Provider' " +
-                "-NotAfter (Get-Date).AddYears(20);" +
-                "Export-PfxCertificate -Cert $c -FilePath '" + path.Replace("'", "''") + "' -Password $pw | Out-Null;" +
-                "Remove-Item ('Cert:\\CurrentUser\\My\\' + $c.Thumbprint) -ErrorAction SilentlyContinue";
-            var psi = new ProcessStartInfo("powershell.exe", "-NoProfile -ExecutionPolicy Bypass -Command \"" + script.Replace("\"", "\\\"") + "\"");
-            psi.UseShellExecute = false;
-            psi.CreateNoWindow = true;
-            psi.RedirectStandardError = true;
-            using (var p = Process.Start(psi))
+            // 2048-bit RSA key, self-signed for 20 years, built in-process (no helper programs are started)
+            using (var rsa = RSA.Create(2048))
             {
-                string err = p.StandardError.ReadToEnd();
-                if (!p.WaitForExit(90000)) { try { p.Kill(); } catch { } throw new Exception("PowerShell took too long."); }
-                if (p.ExitCode != 0 || !File.Exists(path)) throw new Exception(err.Trim() == "" ? "PowerShell failed." : err.Trim());
+                var req = new CertificateRequest("CN=Folder Sync PC", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+                req.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, false));
+                req.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(new OidCollection { new Oid("1.3.6.1.5.5.7.3.1") }, false));   // server authentication
+                using (var self = req.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(20)))
+                    File.WriteAllBytes(path, self.Export(X509ContentType.Pfx, CertPass));
             }
             return new X509Certificate2(path, CertPass, X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet);
         }

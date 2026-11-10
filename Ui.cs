@@ -7,6 +7,9 @@ using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle(PhoneSync.Variant.Name)]
 [assembly: System.Reflection.AssemblyProduct(PhoneSync.Variant.Name)]
+[assembly: System.Reflection.AssemblyCompany("Prabhanshu Mishra")]
+[assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 Prabhanshu Mishra")]
+[assembly: System.Reflection.AssemblyFileVersion("1.0.0.0")]
 
 namespace PhoneSync
 {

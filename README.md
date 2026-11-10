@@ -44,8 +44,12 @@ through the firewall - allow Private and Public networks.
 
 ## Install
 
-Run `Folder Sync PC Setup.exe`. It shows the license, checks for .NET Framework, and installs per user (no admin).
-Settings live in the registry under `HKCU\Software\PhoneSyncWifi`.
+Run `Folder Sync PC Setup.exe`. It shows the license, checks for .NET Framework 4.7.2 or newer (built into current Windows 10/11),
+asks you to close a running copy, and installs per user (no admin). It never force-closes programs, downloads or runs other
+programs. Settings live in the registry under `HKCU\Software\PhoneSyncWifi`.
+
+The Windows files are **not code-signed**, so SmartScreen or an antivirus may warn about a new unknown program (a "false positive").
+You can verify downloads against `SHA256SUMS.txt`, or build everything yourself from this source.
 
 ## Build from source
 
