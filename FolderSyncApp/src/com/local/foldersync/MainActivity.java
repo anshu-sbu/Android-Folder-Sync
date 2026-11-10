@@ -8,6 +8,7 @@ import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -186,8 +187,11 @@ public class MainActivity extends Activity {
         b.setAllCaps(false);
         b.setTextSize(17);
         b.setTypeface(Typeface.DEFAULT_BOLD);
-        b.setTextColor(primary ? ON_ACCENT : TEXT);
-        b.setBackground(round(primary ? ACCENT : 0xFF42321F, 16));
+        b.setTextColor(primary ? ON_ACCENT : ACCENT);
+        // primary: solid saffron; secondary: saffron outline on a slightly lighter card, so it still reads as tappable
+        GradientDrawable shape = round(primary ? ACCENT : 0xFF2A1D10, 16);
+        if (!primary) shape.setStroke(dp(2), ACCENT);
+        b.setBackground(new RippleDrawable(ColorStateList.valueOf(primary ? 0x44000000 : 0x44FF9933), shape, null));   // press feedback
         b.setMinHeight(dp(60));
         b.setOnClickListener(l);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -272,13 +276,24 @@ public class MainActivity extends Activity {
                 if (!prefs.paired() || prefs.tree() == null) { toast("Pair with the PC and choose a folder first."); return; }
                 SyncService.kick = true;
                 SyncService.start(MainActivity.this);
+                toast("Syncing…");
             }
         }));
         sy.addView(button("Forget this PC", false, new View.OnClickListener() {
             public void onClick(View v) {
-                SyncService.stop(MainActivity.this);
-                prefs.unpair();
-                refresh();
+                new android.app.AlertDialog.Builder(MainActivity.this)
+                        .setTitle("Forget this PC?")
+                        .setMessage("Syncing stops and the pairing is removed. Your files stay where they are. You can pair again by scanning the PC's QR code.")
+                        .setNegativeButton("Cancel", null)
+                        .setPositiveButton("Forget", new android.content.DialogInterface.OnClickListener() {
+                            public void onClick(android.content.DialogInterface d, int which) {
+                                SyncService.stop(MainActivity.this);
+                                prefs.unpair();
+                                refresh();
+                                toast("Forgot this PC.");
+                            }
+                        })
+                        .show();
             }
         }));
 
