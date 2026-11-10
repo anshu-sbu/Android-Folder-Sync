@@ -1,0 +1,6 @@
+Third-party software in the Folder Sync Android app
+
+ZXing ("Zebra Crossing") core 3.5.3 - QR code decoding
+Copyright ZXing authors. Licensed under the Apache License, Version 2.0
+https://github.com/zxing/zxing  |  https://www.apache.org/licenses/LICENSE-2.0
+File: libs/zxing-core-3.5.3.jar (unmodified, from Maven Central: com.google.zxing:core:3.5.3)

@@ -1,0 +1,8 @@
+*.exe
+*.bak
+*.tmp
+*.unreadable
+*.apk
+*.idsig
+FolderSyncApp/build/
+PlayStore Publish.docx
