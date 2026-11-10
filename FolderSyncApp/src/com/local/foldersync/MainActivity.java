@@ -32,7 +32,7 @@ public class MainActivity extends Activity {
 
     private Prefs prefs;
     private TextView pcStatus, folderStatus, syncStatus;
-    private Switch autoSwitch, mirrorSwitch;
+    private Switch autoSwitch, mirrorSwitch, twoWaySwitch;
     private final Handler ui = new Handler();
     private final Runnable tick = new Runnable() {
         public void run() { refresh(); ui.postDelayed(this, 800); }
@@ -253,7 +253,17 @@ public class MainActivity extends Activity {
             }
         });
         sy.addView(autoSwitch);
-        mirrorSwitch = toggle("Also delete here when deleted on the PC", prefs.mirror(), new android.widget.CompoundButton.OnCheckedChangeListener() {
+        twoWaySwitch = toggle("Two-way sync (send changes made on this phone to the PC)", prefs.twoWay(), new android.widget.CompoundButton.OnCheckedChangeListener() {
+            public void onCheckedChanged(android.widget.CompoundButton c, boolean on) {
+                prefs.setTwoWay(on);
+                SyncService.kick = true;
+            }
+        });
+        sy.addView(twoWaySwitch);
+        TextView twoNote = text("Also turn on Two-way sync in Folder Sync PC, which asks first. If both sides change the same file, both versions are kept.", 13, MUTED, false);
+        twoNote.setPadding(0, 0, 0, dp(8));
+        sy.addView(twoNote);
+        mirrorSwitch = toggle("Sync deletions too (files deleted on one side are deleted on the other)", prefs.mirror(), new android.widget.CompoundButton.OnCheckedChangeListener() {
             public void onCheckedChanged(android.widget.CompoundButton c, boolean on) { prefs.setMirror(on); }
         });
         sy.addView(mirrorSwitch);

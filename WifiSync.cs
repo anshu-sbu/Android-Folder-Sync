@@ -62,6 +62,7 @@ namespace PhoneSync
         public string Token { get; set; }
         public string Address { get; set; }        // "" = automatic, "internet", or a chosen local IP
         public string CertPass { get; set; }
+        public bool AllowTwoWay { get; set; }      // may the phone add / change / delete files in the shared folder?
 
         public static bool NoSave;
         const string RegKey = @"Software\" + Variant.Key;
@@ -128,6 +129,7 @@ namespace PhoneSync
         public string Token;
         public int Port;
         public string CertPass;
+        public volatile bool AllowUploads;       // two-way sync switch (PUT / DELETE on /api/file)
         public string Fingerprint = "";           // first 128 bits of the certificate's SHA-256, hex
         public event Action<string> Log;
 
@@ -287,7 +289,8 @@ namespace PhoneSync
                         ssl.AuthenticateAsServer(cert, false, (System.Security.Authentication.SslProtocols)3072, false);   // TLS 1.2
                         s = ssl;
                     }
-                    string head = ReadHead(s);
+                    byte[] leftover;
+                    string head = ReadHead(s, out leftover);
                     if (head == null) return;
                     var lines = head.Split(new[] { "\r\n" }, StringSplitOptions.None);
                     var parts = lines[0].Split(' ');
@@ -295,8 +298,14 @@ namespace PhoneSync
                     string method = parts[0], target = parts[1];
                     bool headOnly = method == "HEAD";
                     string host = "";
-                    foreach (var ln in lines) if (ln.StartsWith("Host:", StringComparison.OrdinalIgnoreCase)) host = ln.Substring(5).Trim();
-                    if (method != "GET" && !headOnly) { Reply(s, 405, "text/plain", "Method not allowed", headOnly); return; }
+                    long contentLength = -1;
+                    foreach (var ln in lines)
+                    {
+                        if (ln.StartsWith("Host:", StringComparison.OrdinalIgnoreCase)) host = ln.Substring(5).Trim();
+                        else if (ln.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase)) long.TryParse(ln.Substring(15).Trim(), out contentLength);
+                    }
+                    bool isPut = method == "PUT", isDelete = method == "DELETE";
+                    if (method != "GET" && !headOnly && !(tls && (isPut || isDelete))) { Reply(s, 405, "text/plain", "Method not allowed", headOnly); return; }
 
                     string path = target, qs = "";
                     int q = target.IndexOf('?');
@@ -317,7 +326,8 @@ namespace PhoneSync
                     string tok;
                     if (!query.TryGetValue("t", out tok) || !SameToken(tok, Token))
                     {
-                        Reply(s, 401, "text/plain", "Scan the QR code shown on the PC.", headOnly);
+                        if (isPut) Reject(s, 401, "Scan the QR code shown on the PC.", contentLength, leftover);
+                        else Reply(s, 401, "text/plain", "Scan the QR code shown on the PC.", headOnly);
                         return;
                     }
                     string dev;
@@ -330,9 +340,11 @@ namespace PhoneSync
                         var o = new Dictionary<string, object>();
                         o["pc"] = Environment.MachineName;
                         o["folder"] = Path.GetFileName(Folder.TrimEnd('\\'));
+                        o["twoWay"] = AllowUploads;
                         Reply(s, 200, "application/json", new JavaScriptSerializer().Serialize(o), headOnly);
                         return;
                     }
+                    if (path != "/api/file" && (isPut || isDelete)) { Reply(s, 404, "text/plain", "Not found", false); return; }
                     if (path == "/api/version") { Touch(dev, remote); Manifest(); Reply(s, 200, "text/plain", cacheVersion, headOnly); return; }
                     if (path == "/api/manifest") { Touch(dev, remote); Reply(s, 200, "application/json; charset=utf-8", Manifest(), headOnly); return; }
                     if (path == "/api/file")
@@ -340,7 +352,9 @@ namespace PhoneSync
                         string rel;
                         if (!query.TryGetValue("p", out rel)) { Reply(s, 400, "text/plain", "Missing path", false); return; }
                         Touch(dev, remote);
-                        SendFile(s, rel, dev, headOnly);
+                        if (isPut) ReceiveFile(s, query, rel, dev, contentLength, leftover);
+                        else if (isDelete) DeleteFile(s, query, rel, dev);
+                        else SendFile(s, rel, dev, headOnly);
                         return;
                     }
                     Reply(s, 404, "text/plain", "Not found", headOnly);
@@ -377,17 +391,26 @@ namespace PhoneSync
             return diff == 0;
         }
 
-        static string ReadHead(Stream s)
+        static string ReadHead(Stream s, out byte[] leftover)
         {
-            var buf = new byte[1024];
-            var sb = new StringBuilder();
-            while (sb.Length < 16384)
+            leftover = new byte[0];
+            var buf = new byte[4096];
+            var all = new MemoryStream();
+            while (all.Length < 16384)
             {
                 int n = s.Read(buf, 0, buf.Length);
                 if (n <= 0) return null;
-                sb.Append(Encoding.ASCII.GetString(buf, 0, n));
-                int end = sb.ToString().IndexOf("\r\n\r\n", StringComparison.Ordinal);
-                if (end >= 0) return sb.ToString(0, end);
+                all.Write(buf, 0, n);
+                byte[] data = all.ToArray();
+                for (int i = 3; i < data.Length; i++)
+                {
+                    if (data[i] == '\n' && data[i - 1] == '\r' && data[i - 2] == '\n' && data[i - 3] == '\r')
+                    {
+                        leftover = new byte[data.Length - (i + 1)];
+                        Array.Copy(data, i + 1, leftover, 0, leftover.Length);
+                        return Encoding.ASCII.GetString(data, 0, i - 3);
+                    }
+                }
             }
             return null;
         }
@@ -498,6 +521,139 @@ namespace PhoneSync
                 }
             }
             catch (Exception) { /* phone went away mid-transfer; it will retry */ }
+        }
+
+        // ---------------------------------------------------------------- two-way: the phone may write (only when switched on)
+        static readonly string[] BlockedExt = { ".exe", ".dll", ".bat", ".cmd", ".com", ".scr", ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
+            ".msi", ".msp", ".lnk", ".hta", ".cpl", ".reg", ".inf", ".pif", ".jar", ".appx", ".msix" };
+        static readonly string[] Reserved = { "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9" };
+        const long MaxUpload = 8L * 1024 * 1024 * 1024;
+        static readonly DateTime Epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        /// <summary>Turns a relative path from the phone into a full path inside the shared folder, or null if it is not acceptable.</summary>
+        string ResolvePath(string rel)
+        {
+            if (string.IsNullOrEmpty(rel) || rel.Length > 600 || rel.StartsWith("/") || rel.Contains("\\") || rel.Contains(":")) return null;
+            foreach (var seg in rel.Split('/'))
+            {
+                if (seg.Length == 0 || seg == "." || seg == ".." || seg.EndsWith(".") || seg.EndsWith(" ") || seg.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return null;
+                string stem = seg.Split('.')[0].ToUpperInvariant();
+                if (Array.IndexOf(Reserved, stem) >= 0) return null;
+            }
+            string root = Path.GetFullPath(Folder).TrimEnd('\\') + "\\";
+            string full = Path.GetFullPath(Path.Combine(root, rel.Replace('/', '\\')));
+            return full.StartsWith(root, StringComparison.OrdinalIgnoreCase) ? full : null;
+        }
+
+        /// <summary>Does the PC file still look the way the phone last saw it? ("-" = the phone expects it not to exist)</summary>
+        static bool Matches(string full, Dictionary<string, string> q)
+        {
+            string ps, pm;
+            if (!q.TryGetValue("ps", out ps)) ps = "-";
+            if (!q.TryGetValue("pm", out pm)) pm = "-";
+            bool exists = File.Exists(full);
+            if (ps == "-") return !exists;
+            if (!exists) return false;
+            var fi = new FileInfo(full);
+            long m = (long)(fi.LastWriteTimeUtc - Epoch).TotalSeconds;
+            return ps == fi.Length.ToString() && pm == m.ToString();
+        }
+
+        /// <summary>Answers a refused upload. The upload body is read and thrown away first (up to 256 MB), otherwise the
+        /// connection reset would hide our answer from the phone.</summary>
+        static void Reject(Stream s, int code, string msg, long len, byte[] leftover)
+        {
+            long remaining = len - leftover.Length;
+            if (remaining > 0 && remaining <= 256L * 1024 * 1024)
+            {
+                var buf = new byte[64 * 1024];
+                try
+                {
+                    while (remaining > 0)
+                    {
+                        int n = s.Read(buf, 0, (int)Math.Min(buf.Length, remaining));
+                        if (n <= 0) break;
+                        remaining -= n;
+                    }
+                }
+                catch { }
+            }
+            Reply(s, code, "text/plain", msg, false);
+        }
+
+        void ReceiveFile(Stream s, Dictionary<string, string> q, string rel, string dev, long len, byte[] leftover)
+        {
+            if (!AllowUploads) { Reject(s, 403, "Two-way sync is turned off on the PC.", len, leftover); return; }
+            string full = ResolvePath(rel);
+            if (full == null) { Reject(s, 400, "Bad path", len, leftover); return; }
+            if (Array.IndexOf(BlockedExt, Path.GetExtension(full).ToLowerInvariant()) >= 0) { Reject(s, 415, "This file type can't be sent to the PC.", len, leftover); return; }
+            if (len < 0 || len > MaxUpload) { Reject(s, 400, "Bad size", len, leftover); return; }
+            if (Directory.Exists(full)) { Reject(s, 409, "A folder has that name", len, leftover); return; }
+            if (!Matches(full, q)) { Reject(s, 409, "The PC file changed meanwhile", len, leftover); return; }
+            string ms; long mtime;
+            if (!q.TryGetValue("m", out ms) || !long.TryParse(ms, out mtime)) mtime = (long)(DateTime.UtcNow - Epoch).TotalSeconds;
+            string tmp = full + "." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".part";
+            long got = 0;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(full));
+                using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    int take = (int)Math.Min(leftover.Length, len);
+                    if (take > 0) { fs.Write(leftover, 0, take); got += take; }
+                    var buf = new byte[64 * 1024];
+                    while (got < len)
+                    {
+                        int n = s.Read(buf, 0, (int)Math.Min(buf.Length, len - got));
+                        if (n <= 0) break;
+                        fs.Write(buf, 0, n);
+                        got += n;
+                    }
+                }
+                if (got != len) { try { File.Delete(tmp); } catch { } return; }     // the phone went away: nothing is kept
+                File.SetLastWriteTimeUtc(tmp, Epoch.AddSeconds(mtime));
+                if (File.Exists(full)) File.Replace(tmp, full, null); else File.Move(tmp, full);
+                File.SetLastWriteTimeUtc(full, Epoch.AddSeconds(mtime));
+            }
+            catch (Exception ex)
+            {
+                try { File.Delete(tmp); } catch { }
+                Reply(s, 500, "text/plain", "Couldn't save the file: " + ex.Message, false);
+                return;
+            }
+            lock (gate) cacheAt = DateTime.MinValue;
+            var fi = new FileInfo(full);
+            var o = new Dictionary<string, object>();
+            o["s"] = fi.Length;
+            o["m"] = (long)(fi.LastWriteTimeUtc - Epoch).TotalSeconds;
+            Say("Received " + rel + "  (" + Human(len) + ")  from " + dev);
+            Reply(s, 200, "application/json", new JavaScriptSerializer().Serialize(o), false);
+        }
+
+        void DeleteFile(Stream s, Dictionary<string, string> q, string rel, string dev)
+        {
+            if (!AllowUploads) { Reply(s, 403, "text/plain", "Two-way sync is turned off on the PC.", false); return; }
+            string full = ResolvePath(rel);
+            if (full == null) { Reply(s, 400, "text/plain", "Bad path", false); return; }
+            if (!File.Exists(full)) { Reply(s, 200, "application/json", "{\"deleted\":false}", false); return; }
+            if (!Matches(full, q)) { Reply(s, 409, "text/plain", "The PC file changed meanwhile", false); return; }
+            try
+            {
+                // never a hard delete: the file goes to the Recycle Bin
+                Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(full, Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs, Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                string root = Path.GetFullPath(Folder).TrimEnd('\\');
+                string dir = Path.GetDirectoryName(full);
+                while (dir != null && dir.Length > root.Length && Directory.Exists(dir) && Directory.GetFileSystemEntries(dir).Length == 0)
+                {
+                    Directory.Delete(dir);
+                    dir = Path.GetDirectoryName(dir);
+                }
+            }
+            catch (Exception ex) { Reply(s, 500, "text/plain", "Couldn't delete: " + ex.Message, false); return; }
+            lock (gate) cacheAt = DateTime.MinValue;
+            Say("Deleted " + rel + " (moved to the Recycle Bin) at the request of " + dev);
+            Reply(s, 200, "application/json", "{\"deleted\":true}", false);
         }
 
         public static string Human(long b)
@@ -643,7 +799,8 @@ namespace PhoneSync
         readonly Picker addressBox;
         readonly Field folderBox;
         readonly PictureBox qrBox;
-        readonly ToggleSwitch startupBox;
+        readonly ToggleSwitch startupBox, twoWayBox;
+        bool revertingTwoWay;
         readonly bool startHidden;
         readonly string shotPath;
         bool reallyExit, toldAboutTray, started, filling;
@@ -839,6 +996,13 @@ namespace PhoneSync
             ft.Controls.Add(folderBox, 0, 1);
             ft.Controls.Add(Btn("Open", (o, e) => OpenFolder()), 1, 1);
             ft.Controls.Add(Btn("Change…", (o, e) => ChangeFolder()), 2, 1);
+            twoWayBox = new ToggleSwitch();
+            twoWayBox.Text = "Two-way sync: let the phone add, change and delete files in this folder";
+            twoWayBox.Checked = settings.AllowTwoWay;
+            twoWayBox.Margin = new Padding(0, Ui.Px(14), 0, 0);
+            twoWayBox.CheckedChanged += (o, e) => TwoWayChanged();
+            ft.Controls.Add(twoWayBox, 0, 2);
+            ft.SetColumnSpan(twoWayBox, 3);
             folderCard.Controls.Add(ft);
 
             // ---- activity card
@@ -917,6 +1081,7 @@ namespace PhoneSync
                 server.Token = settings.Token;
                 server.Port = settings.Port;
                 server.CertPass = settings.CertPass;
+                server.AllowUploads = settings.AllowTwoWay;
                 ThreadPool.QueueUserWorkItem(x =>
                 {
                     try { server.Start(); } catch (Exception ex) { server.LastError = ex.Message; }
@@ -1097,6 +1262,23 @@ namespace PhoneSync
                 ThreadPool.QueueUserWorkItem(o => u.RemoveMapping(p));
             }
             upnp = null; mappedPort = 0;
+        }
+
+        void TwoWayChanged()
+        {
+            if (revertingTwoWay) return;
+            if (twoWayBox.Checked)
+            {
+                var a = MessageBox.Show(this,
+                    "Let the phone add, change and delete files in\n\n    " + settings.LocalFolder + "\n\nDeleted files go to the Recycle Bin. Only turn this on for a folder you are happy to have changed from the phone, " +
+                    "and keep the pairing code private (anyone with it could then change this folder).",
+                    Variant.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+                if (a != DialogResult.Yes) { revertingTwoWay = true; twoWayBox.Checked = false; revertingTwoWay = false; return; }
+            }
+            settings.AllowTwoWay = twoWayBox.Checked;
+            settings.Save();
+            server.AllowUploads = settings.AllowTwoWay;
+            AddLog(settings.AllowTwoWay ? "Two-way sync is ON: the phone may change files in the shared folder." : "Two-way sync is OFF: the phone can only read.");
         }
 
         void NewCode()

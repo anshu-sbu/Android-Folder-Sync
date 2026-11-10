@@ -88,7 +88,8 @@ public class SyncService extends Service {
                 } else {
                     String v = Http.getString(p.url("/api/version", null), p.fp()).trim();
                     long now = System.currentTimeMillis();
-                    boolean due = kick || !v.equals(lastVersion) || now - lastFull > 120000;
+                    // in two-way mode the phone folder is rescanned often, because Android can't tell us when files in it change
+                    boolean due = kick || !v.equals(lastVersion) || now - lastFull > (p.twoWay() ? 20000 : 120000);
                     if (due) {
                         kick = false;
                         String r = Syncer.run(this, l);

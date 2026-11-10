@@ -23,6 +23,7 @@ final class Prefs {
     String pcName() { return sp.getString("pc", ""); }
     String tree() { return sp.getString("tree", null); }
     boolean mirror() { return sp.getBoolean("mirror", false); }
+    boolean twoWay() { return sp.getBoolean("twoWay", false); }
     boolean auto() { return sp.getBoolean("auto", true); }
     boolean paired() { return !host().isEmpty() && port() > 0 && !token().isEmpty() && !fp().isEmpty(); }
 
@@ -40,6 +41,7 @@ final class Prefs {
     }
 
     void setMirror(boolean v) { sp.edit().putBoolean("mirror", v).apply(); }
+    void setTwoWay(boolean v) { sp.edit().putBoolean("twoWay", v).apply(); }
     void setAuto(boolean v) { sp.edit().putBoolean("auto", v).apply(); }
 
     void unpair() {

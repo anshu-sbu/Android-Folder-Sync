@@ -32,10 +32,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 4. YOUR FILES
 
 The Software copies files from a folder on your PC into a folder on your Android
-phone and can overwrite files in the phone folder you choose. The Android app can
-also delete files in that folder if you turn on its "Also delete here when deleted
-on the PC" option. You are responsible for backing up your data. The author is not
-responsible for lost, overwritten or deleted files.
+phone and can overwrite files in the phone folder you choose. If you turn on the
+optional two-way sync (on both the PC and the phone), it also copies changes from the
+phone into the shared PC folder, can overwrite files there, and - if you also turn on
+"Sync deletions too" - can delete files on either side (files deleted on the PC go to
+the Recycle Bin; files deleted on the phone are permanently deleted). When both sides
+change a file, both versions are kept. You are responsible for backing up your data.
+The author is not responsible for lost, overwritten or deleted files.
 
 5. NETWORK AND INTERNET USE
 
@@ -47,7 +50,7 @@ part of the code). It can be reached on your local network or, if you choose
     mobile data for which you are charged by your provider. That cost is yours.
   - "Internet" mode opens a port on your router (UPnP) or needs you to forward one,
     and exposes the shared folder to anyone who has the pairing code while the app
-    is running. Keep the code private, use "New code" to revoke old pairings, and
+    is running (and, with two-way sync on, lets them add, change and delete files). Keep the code private, use "New code" to revoke old pairings, and
     share only folders you are happy to expose. It may not work on connections that
     share one public address.
   - Traffic is encrypted with TLS using a self-signed certificate that the phone

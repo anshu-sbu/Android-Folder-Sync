@@ -33,7 +33,8 @@ The Windows file is **not code-signed**, so SmartScreen or an antivirus may warn
 5. Files in the shared PC folder (default `Desktop\WiFi Sync`) are copied into the phone folder and updated when they
    change. The phone app keeps syncing in the background (a notification shows its status).
 
-Pairing is QR only - there is no link to copy or paste. Sync goes from the PC to the phone.
+Pairing is QR only - there is no link to copy or paste. By default sync goes from the PC to the phone; see
+[Two-way sync](#two-way-sync-optional) to send phone changes back.
 
 ### Where the phone can be
 
@@ -47,11 +48,35 @@ Chosen under **Network address** in Folder Sync PC:
 
 **Over the internet or on public Wi-Fi, transfers can be slow and may use mobile data that you are charged for.**
 
+### Two-way sync (optional)
+
+Off by default. To keep the two folders identical in both directions, turn on **both**:
+
+- in Folder Sync PC: **Two-way sync: let the phone add, change and delete files in this folder** (it asks first);
+- in Folder Sync Android: **Two-way sync**, and optionally **Sync deletions too**.
+
+How it decides: each side is compared with how it looked at the last sync, never with the other device's clock.
+
+| What happened | Result |
+|---|---|
+| Changed on the PC only | downloaded to the phone |
+| Changed on the phone only | sent to the PC |
+| Changed on **both** | both versions kept: the phone's becomes `name (phone copy yyyyMMdd-HHmm).ext` on both sides |
+| Deleted on one side | deleted on the other **only if "Sync deletions too" is on** (otherwise kept and not sent back) |
+| Deleted on one side, changed on the other | the changed file wins and is restored |
+
+Safety: files deleted on the PC at the phone's request go to the **Recycle Bin** (deletions on the phone are permanent, as
+Android has no recycle bin for app folders). The PC refuses changes if its file changed since the phone last saw it, never
+accepts files outside the shared folder, and blocks program and script types (`.exe`, `.bat`, `.ps1`, `.js`, `.lnk`, ...).
+The phone rescans its folder every 20 seconds, because Android can't announce changes in a chosen folder. Empty folders
+are not synced, and the same names that differ only by letter case on the phone can collide on Windows.
+
 ### Security
 
 Files are encrypted in transit (TLS). The PC creates its own self-signed certificate; the QR code carries the certificate's
 fingerprint and a secret token, and the phone only talks to a server with exactly that certificate. In Internet mode the
-shared folder is reachable by anyone who has the pairing code while the app is running, so keep the code private, share
+shared folder is reachable by anyone who has the pairing code while the app is running (and, with two-way sync on, they could
+add, change and delete files in it), so keep the code private, share
 only folders you are happy to expose, and use **New code** to revoke old pairings. Windows may ask to allow the app
 through the firewall - allow Private and Public networks.
 
